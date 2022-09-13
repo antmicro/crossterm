@@ -1,5 +1,7 @@
 use std::{collections::vec_deque::VecDeque, io, time::Duration};
 
+#[cfg(target_os = "wasi")]
+use super::source::wasi::WasiInternalEventSource;
 #[cfg(unix)]
 use super::source::unix::UnixInternalEventSource;
 #[cfg(windows)]
@@ -16,6 +18,8 @@ pub(crate) struct InternalEventReader {
 
 impl Default for InternalEventReader {
     fn default() -> Self {
+        #[cfg(target_os = "wasi")]
+        let source = WasiInternalEventSource::new();
         #[cfg(windows)]
         let source = WindowsEventSource::new();
         #[cfg(unix)]

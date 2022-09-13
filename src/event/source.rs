@@ -4,6 +4,9 @@ use std::time::Duration;
 use super::sys::Waker;
 use super::InternalEvent;
 
+#[cfg(target_os = "wasi")]
+pub(crate) mod wasi;
+
 #[cfg(unix)]
 pub(crate) mod unix;
 #[cfg(windows)]

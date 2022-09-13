@@ -21,7 +21,7 @@ impl Filter for CursorPositionFilter {
 pub(crate) struct EventFilter;
 
 impl Filter for EventFilter {
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "wasi"))]
     fn eval(&self, event: &InternalEvent) -> bool {
         matches!(*event, InternalEvent::Event(_))
     }

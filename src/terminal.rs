@@ -102,7 +102,7 @@ pub(crate) mod sys;
 ///
 /// Please have a look at the [raw mode](./index.html#raw-mode) section.
 pub fn is_raw_mode_enabled() -> Result<bool> {
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "wasi"))]
     {
         Ok(sys::is_raw_mode_enabled())
     }

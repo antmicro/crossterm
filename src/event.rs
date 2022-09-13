@@ -206,7 +206,7 @@ pub fn poll(timeout: Duration) -> Result<bool> {
 pub fn read() -> Result<Event> {
     match read_internal(&EventFilter)? {
         InternalEvent::Event(event) => Ok(event),
-        #[cfg(unix)]
+        #[cfg(any(unix, target_os = "wasi"))]
         _ => unreachable!(),
     }
 }
@@ -859,7 +859,7 @@ pub(crate) enum InternalEvent {
     /// An event.
     Event(Event),
     /// A cursor position (`col`, `row`).
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "wasi"))]
     CursorPosition(u16, u16),
 }
 
