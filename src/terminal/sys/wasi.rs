@@ -14,9 +14,11 @@ pub(crate) fn is_raw_mode_enabled() -> bool {
 }
 
 pub(crate) fn size() -> Result<(u16, u16)> {
+    let buffer = "{ \"args\": [\"get\", \"screenSize\"] }";
     let custom_syscall = json!({
         "command": "hterm",
-        "args": &["get", "screenSize"],
+        "buf_len": buffer.len(),
+        "buf_ptr": format!("{:?}", buffer.as_ptr()),
     });
     let hterm_screen = fs::read_link(format!("/!{}", custom_syscall))?;
     let value = hterm_screen.display().to_string();
