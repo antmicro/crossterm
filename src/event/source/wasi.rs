@@ -1,4 +1,13 @@
-use std::{collections::VecDeque, io::{self, Read}, time::Duration};
+use std::{
+    collections::VecDeque,
+    fs::File,
+    io::{self, Read},
+    mem,
+    time::Duration, os::wasi::prelude::AsRawFd
+};
+use std::os::wasi::io::{FromRawFd, RawFd};
+
+use wasi;
 
 use crate::Result;
 
@@ -10,19 +19,35 @@ use super::super::{
     InternalEvent,
 };
 
+const CLOCK_TOKEN: u64 = 1;
+const TTY_TOKEN: u64 = 2;
+const RESIZE_TOKEN: u64 = 3;
+
+const STDIN: RawFd = 0x0;
+
+const TTY_BUFFER_SIZE: usize = 1_204;
+
 pub(crate) struct WasiInternalEventSource {
+    events: [wasi::Event; 3],
     parser: Parser,
-    input: io::Stdin,
+    tty_buffer: Vec<u8>,
+    tty_input: File,
 
 }
 
 impl WasiInternalEventSource {
     pub fn new() -> Result<Self> {
+        WasiInternalEventSource::from_file_descriptor(STDIN)
+    }
+
+    pub(crate) fn from_file_descriptor(input_fd: RawFd) -> Result<Self> {
         // Read only stdin for now
         Ok(
             WasiInternalEventSource {
+                events: unsafe { mem::zeroed() },
                 parser: Parser::default(),
-                input: io::stdin(),
+                tty_buffer: vec![0u8; TTY_BUFFER_SIZE],
+                tty_input: unsafe { File::from_raw_fd(input_fd) },
             }
         )
     }
@@ -35,18 +60,97 @@ impl EventSource for WasiInternalEventSource {
             return Ok(Some(event));
         }
 
-        if let Some(_) = timeout {
-            unimplemented!();
+        let mut subs = vec![
+            wasi::Subscription {
+                userdata: TTY_TOKEN,
+                u: wasi::SubscriptionU {
+                    tag: wasi::EVENTTYPE_FD_READ.raw(),
+                    u: wasi::SubscriptionUU {
+                        fd_read: wasi::SubscriptionFdReadwrite {
+                            file_descriptor: self.tty_input.as_raw_fd() as u32
+                        }
+                    }
+                }
+            },
+            // TODO: resize hterm window token
+        ];
+
+        if let Some(timeout) = timeout {
+            subs.push(wasi::Subscription {
+                userdata: CLOCK_TOKEN,
+                u: wasi::SubscriptionU {
+                    tag: wasi::EVENTTYPE_CLOCK.raw(),
+                    u: wasi::SubscriptionUU {
+                        clock: wasi::SubscriptionClock {
+                            id: wasi::CLOCKID_MONOTONIC,
+                            timeout: timeout.as_nanos() as u64,
+                            precision: 0,
+                            flags: 0
+                        }
+                    }
+                }
+            });
         }
 
-        let mut one: [u8; 1] = [0u8; 1];
-
         loop {
-            self.input.read_exact(&mut one).expect("Cannot read stdin!");
-            self.parser.advance(&one, true);
+            // subscribe and wait
+            let result = unsafe {
+                wasi::poll_oneoff(
+                    subs.as_ptr(),
+                    self.events.as_mut_ptr(),
+                    subs.len()
+                )
+            };
 
-            if let Some(event) = self.parser.next() {
-                return Ok(Some(event));
+            let events_count = match result {
+                Ok(n) => n,
+                Err(e) => {
+                    return Err(io::Error::from_raw_os_error(e.raw() as i32));
+                }
+            };
+
+            if events_count == 0 {
+                return Ok(None)
+            }
+
+            // iterate over occured events
+            for event in self.events[0..events_count].iter() {
+                let errno = event.error.raw();
+                if errno > 0 {
+                    return Err(io::Error::from_raw_os_error(errno as i32))
+                }
+            }
+
+            for event in self.events[0..events_count].iter() {
+                match (event.userdata, event.type_) {
+                    (CLOCK_TOKEN, wasi::EVENTTYPE_CLOCK) => {
+                        return Ok(None)
+                    },
+                    (TTY_TOKEN, wasi::EVENTTYPE_FD_READ) => {
+                        let to_read = event.fd_readwrite.nbytes as usize;
+                        if to_read > self.tty_buffer.len() {
+                            self.tty_buffer.resize(to_read, 0);
+                        }
+                        let read_bytes = match self.tty_input.read(&mut self.tty_buffer[0..to_read]) {
+                            Ok(n) => n,
+                            Err(e) => {
+                                return Err(e);
+                            }
+                        };
+
+                        let more = read_bytes == self.tty_buffer.len();
+                        self.parser.advance(
+                            &mut self.tty_buffer[0..read_bytes],
+                            more
+                        );
+
+                        if let Some(event) = self.parser.next() {
+                            return Ok(Some(event));
+                        }
+                    },
+                    (RESIZE_TOKEN, _) => unimplemented!(),
+                    _ => unreachable!(),
+                }
             }
         }
     }
