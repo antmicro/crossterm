@@ -42,6 +42,22 @@ impl WasiInternalEventSource {
 
     pub(crate) fn from_file_descriptor(input_fd: RawFd) -> Result<Self> {
         // Read only stdin for now
+        let fd_stats = unsafe {
+            match wasi::fd_fdstat_get(input_fd as u32) {
+                Ok(s) => s,
+                Err(e) => {
+                    return Err(io::Error::from_raw_os_error(e.raw() as i32))
+                }
+            }
+        };
+
+        // In the wash stdin is char-device with read right
+        // Crossterm crate won't panic even if we return Err here
+        if fd_stats.fs_filetype != wasi::FILETYPE_CHARACTER_DEVICE ||
+            (fd_stats.fs_rights_base & wasi::RIGHTS_FD_READ) == 0 {
+            panic!("Polling from fd={} not possible!", input_fd);
+        }
+
         Ok(
             WasiInternalEventSource {
                 events: unsafe { mem::zeroed() },
