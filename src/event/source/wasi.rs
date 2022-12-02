@@ -16,7 +16,7 @@ use super::super::{
     sys::wasi::{
         parse::parse_event,
     },
-    InternalEvent,
+    Event, InternalEvent,
 };
 
 const CLOCK_TOKEN: u64 = 1;
@@ -32,6 +32,7 @@ pub(crate) struct WasiInternalEventSource {
     parser: Parser,
     tty_buffer: Vec<u8>,
     tty_input: File,
+    event_src: File,
 
 }
 
@@ -58,12 +59,25 @@ impl WasiInternalEventSource {
             panic!("Polling from fd={} not possible!", input_fd);
         }
 
+        // Obtain hterm event source
+        let event_source_fd = {
+            match wasi_ext_lib::event_source_fd(
+                wasi_ext_lib::WASI_EVENT_WINCH
+            ) {
+                Ok(fd) => fd,
+                Err(e) => {
+                    return Err(io::Error::from_raw_os_error(e))
+                },
+            }
+        };
+
         Ok(
             WasiInternalEventSource {
                 events: unsafe { mem::zeroed() },
                 parser: Parser::default(),
                 tty_buffer: vec![0u8; TTY_BUFFER_SIZE],
                 tty_input: unsafe { File::from_raw_fd(input_fd) },
+                event_src: unsafe { File::from_raw_fd(event_source_fd) },
             }
         )
     }
@@ -88,7 +102,17 @@ impl EventSource for WasiInternalEventSource {
                     }
                 }
             },
-            // TODO: resize hterm window token
+            wasi::Subscription {
+                userdata: RESIZE_TOKEN,
+                u: wasi::SubscriptionU {
+                    tag: wasi::EVENTTYPE_FD_READ.raw(),
+                    u: wasi::SubscriptionUU {
+                        fd_read: wasi::SubscriptionFdReadwrite {
+                            file_descriptor: self.event_src.as_raw_fd() as u32
+                        }
+                    }
+                }
+            },
         ];
 
         if let Some(timeout) = timeout {
@@ -164,7 +188,25 @@ impl EventSource for WasiInternalEventSource {
                             return Ok(Some(event));
                         }
                     },
-                    (RESIZE_TOKEN, _) => unimplemented!(),
+                    (RESIZE_TOKEN, wasi::EVENTTYPE_FD_READ) => {
+                        let to_read = event.fd_readwrite.nbytes as usize;
+                        let mut read_buff: [u8; wasi_ext_lib::WASI_EVENTS_MASK_SIZE] = [
+                            0u8; wasi_ext_lib::WASI_EVENTS_MASK_SIZE
+                        ];
+
+                        if let Err(e) = self.event_src.read(&mut read_buff[0..to_read]) {
+                            return Err(e);
+                        };
+
+                        let events = read_buff[0] as wasi_ext_lib::WasiEvents;
+
+                        if events & wasi_ext_lib::WASI_EVENT_WINCH != 0 {
+                            let new_size = crate::terminal::size()?;
+                            return Ok(Some(InternalEvent::Event(Event::Resize(
+                                new_size.0, new_size.1,
+                            ))));
+                        }
+                    },
                     _ => unreachable!(),
                 }
             }
