@@ -19,7 +19,7 @@ pub(crate) fn size() -> Result<(u16, u16)> {
     match scanf!(value, "[hterm.Size: {}, {}]", u16, u16) {
         Ok(size) => Ok(size),
         Err(e) => {
-            println!("{:?}", e);
+            eprintln!("{:?}", e);
             Err(
                 Error::new(
                     ErrorKind::Unsupported,
