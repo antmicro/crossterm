@@ -1,9 +1,10 @@
 //! UNIX related logic for terminal manipulation.
-use std::io::{Error, ErrorKind};
+use std::io::{Error, ErrorKind, stdin};
+use std::os::fd::AsRawFd;
 
 use crate::error::Result;
 
-use sscanf::scanf;
+use wasi_ext_lib::{ioctl, IoctlNum};
 
 pub(crate) fn is_raw_mode_enabled() -> bool {
     // hterm always has enabled raw mode
@@ -11,22 +12,10 @@ pub(crate) fn is_raw_mode_enabled() -> bool {
 }
 
 pub(crate) fn size() -> Result<(u16, u16)> {
-    let hterm_screen = match wasi_ext_lib::hterm("screenSize", None) {
-        Ok(s) => s,
-        Err(e) => return Err(Error::new(ErrorKind::Other, format!("Could not get screen size (os error {})", e)))
-    };
-    let value = hterm_screen.unwrap();
-    match scanf!(value, "[hterm.Size: {}, {}]", u16, u16) {
-        Ok(size) => Ok(size),
-        Err(e) => {
-            eprintln!("{:?}", e);
-            Err(
-                Error::new(
-                    ErrorKind::Unsupported,
-                    "Cannot obtain terminal window size with hterm custom syscall"
-                )
-            )
-        }
+    let mut size = [0i32; 2];
+    match ioctl(stdin().as_raw_fd(), IoctlNum::GetScreenSize , Some(&mut size)) {
+        Ok(()) => Ok((size[0] as u16, size[1] as u16)),
+        Err(e) => Err(Error::new(ErrorKind::Other, format!("Could not get screen size (os error {})", e)))
     }
 }
 
