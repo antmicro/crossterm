@@ -48,7 +48,6 @@ use std::fmt;
 use crate::Result;
 use crate::{csi, impl_display, Command};
 
-#[cfg(not(target_os = "wasi"))]
 pub use sys::position;
 
 pub(crate) mod sys;

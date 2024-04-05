@@ -7,8 +7,6 @@ use std::{
 };
 use std::os::wasi::io::{FromRawFd, RawFd};
 
-use wasi;
-
 use crate::Result;
 
 use super::super::{

@@ -2,6 +2,8 @@
 
 #[cfg(unix)]
 pub use self::unix::position;
+#[cfg(target_os = "wasi")]
+pub use self::wasi::position;
 #[cfg(windows)]
 pub use self::windows::position;
 #[cfg(windows)]
@@ -15,3 +17,6 @@ pub(crate) mod windows;
 
 #[cfg(unix)]
 pub(crate) mod unix;
+
+#[cfg(target_os = "wasi")]
+pub(crate) mod wasi;
