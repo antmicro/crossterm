@@ -86,6 +86,7 @@ use bitflags::bitflags;
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use source::InternalEventRepr;
 
 use crate::{csi, Command, Result};
 use filter::{EventFilter, Filter};
@@ -203,9 +204,19 @@ pub fn poll(timeout: Duration) -> Result<bool> {
 ///     }
 /// }
 /// ```
+#[cfg(not(feature = "byte-repr"))]
 pub fn read() -> Result<Event> {
     match read_internal(&EventFilter)? {
         InternalEvent::Event(event) => Ok(event),
+        #[cfg(any(unix, target_os = "wasi"))]
+        _ => unreachable!(),
+    }
+}
+
+#[cfg(feature = "byte-repr")]
+pub fn read() -> Result<(Event, Vec<u8>)> {
+    match read_internal(&EventFilter)? {
+        (InternalEvent::Event(event), bytes) => Ok((event, bytes)),
         #[cfg(any(unix, target_os = "wasi"))]
         _ => unreachable!(),
     }
@@ -230,7 +241,7 @@ where
 }
 
 /// Reads a single `InternalEvent`.
-pub(crate) fn read_internal<F>(filter: &F) -> Result<InternalEvent>
+pub(crate) fn read_internal<F>(filter: &F) -> Result<InternalEventRepr>
 where
     F: Filter,
 {

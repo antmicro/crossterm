@@ -39,7 +39,15 @@ fn read_position_raw() -> Result<(u16, u16)> {
     loop {
         match poll_internal(Some(Duration::from_millis(2000)), &CursorPositionFilter) {
             Ok(true) => {
+                #[cfg(not(feature = "byte-repr"))]
                 if let Ok(InternalEvent::CursorPosition(x, y)) =
+                    read_internal(&CursorPositionFilter)
+                {
+                    return Ok((x, y));
+                }
+
+                #[cfg(feature = "byte-repr")]
+                if let Ok((InternalEvent::CursorPosition(x, y), _)) =
                     read_internal(&CursorPositionFilter)
                 {
                     return Ok((x, y));

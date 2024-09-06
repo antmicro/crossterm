@@ -8,12 +8,12 @@ use super::source::unix::UnixInternalEventSource;
 use super::source::windows::WindowsEventSource;
 #[cfg(feature = "event-stream")]
 use super::sys::Waker;
-use super::{filter::Filter, source::EventSource, timeout::PollTimeout, InternalEvent, Result};
+use super::{filter::Filter, source::{EventSource, InternalEventRepr}, timeout::PollTimeout, Result};
 /// Can be used to read `InternalEvent`s.
 pub(crate) struct InternalEventReader {
-    events: VecDeque<InternalEvent>,
+    events: VecDeque<InternalEventRepr>,
     source: Option<Box<dyn EventSource>>,
-    skipped_events: Vec<InternalEvent>,
+    skipped_events: Vec<InternalEventRepr>,
 }
 
 impl Default for InternalEventReader {
@@ -47,7 +47,12 @@ impl InternalEventReader {
         F: Filter,
     {
         for event in &self.events {
-            if filter.eval(event) {
+            #[cfg(not(feature = "byte-repr"))]
+            let _event = event;
+            #[cfg(feature = "byte-repr")]
+            let _event = &event.0;
+
+            if filter.eval(_event) {
                 return Ok(true);
             }
         }
@@ -68,7 +73,12 @@ impl InternalEventReader {
             let maybe_event = match event_source.try_read(poll_timeout.leftover()) {
                 Ok(None) => None,
                 Ok(Some(event)) => {
-                    if filter.eval(&event) {
+                    #[cfg(not(feature = "byte-repr"))]
+                    let _event = &event;
+                    #[cfg(feature = "byte-repr")]
+                    let _event = &event.0;
+
+                    if filter.eval(_event) {
                         Some(event)
                     } else {
                         self.skipped_events.push(event);
@@ -97,7 +107,7 @@ impl InternalEventReader {
         }
     }
 
-    pub(crate) fn read<F>(&mut self, filter: &F) -> Result<InternalEvent>
+    pub(crate) fn read<F>(&mut self, filter: &F) -> Result<InternalEventRepr>
     where
         F: Filter,
     {
@@ -105,7 +115,12 @@ impl InternalEventReader {
 
         loop {
             while let Some(event) = self.events.pop_front() {
-                if filter.eval(&event) {
+                #[cfg(not(feature = "byte-repr"))]
+                let _event = &event;
+                #[cfg(feature = "byte-repr")]
+                let _event = &event.0;
+
+                if filter.eval(_event) {
                     while let Some(event) = skipped_events.pop_front() {
                         self.events.push_back(event);
                     }
@@ -129,6 +144,7 @@ impl InternalEventReader {
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "byte-repr"))]
 mod tests {
     use std::io;
     use std::{collections::VecDeque, time::Duration};
@@ -139,7 +155,7 @@ mod tests {
     use super::super::filter::CursorPositionFilter;
     use super::{
         super::{filter::InternalEventFilter, Event},
-        EventSource, InternalEvent, InternalEventReader,
+        EventSource, InternalEventRepr, InternalEventReader,
     };
 
     #[test]
@@ -162,7 +178,7 @@ mod tests {
     #[test]
     fn test_poll_returns_true_for_matching_event_in_queue_at_front() {
         let mut reader = InternalEventReader {
-            events: vec![InternalEvent::Event(Event::Resize(10, 10))].into(),
+            events: vec![InternalEventRepr::Event(Event::Resize(10, 10))].into(),
             source: None,
             skipped_events: Vec::with_capacity(32),
         };
@@ -175,8 +191,8 @@ mod tests {
     fn test_poll_returns_true_for_matching_event_in_queue_at_back() {
         let mut reader = InternalEventReader {
             events: vec![
-                InternalEvent::Event(Event::Resize(10, 10)),
-                InternalEvent::CursorPosition(10, 20),
+                InternalEventRepr::Event(Event::Resize(10, 10)),
+                InternalEventRepr::CursorPosition(10, 20),
             ]
             .into(),
             source: None,
@@ -188,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_read_returns_matching_event_in_queue_at_front() {
-        const EVENT: InternalEvent = InternalEvent::Event(Event::Resize(10, 10));
+        const EVENT: InternalEventRepr = InternalEventRepr::Event(Event::Resize(10, 10));
 
         let mut reader = InternalEventReader {
             events: vec![EVENT].into(),
@@ -202,10 +218,10 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_read_returns_matching_event_in_queue_at_back() {
-        const CURSOR_EVENT: InternalEvent = InternalEvent::CursorPosition(10, 20);
+        const CURSOR_EVENT: InternalEventRepr = InternalEventRepr::CursorPosition(10, 20);
 
         let mut reader = InternalEventReader {
-            events: vec![InternalEvent::Event(Event::Resize(10, 10)), CURSOR_EVENT].into(),
+            events: vec![InternalEventRepr::Event(Event::Resize(10, 10)), CURSOR_EVENT].into(),
             source: None,
             skipped_events: Vec::with_capacity(32),
         };
@@ -216,8 +232,8 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_read_does_not_consume_skipped_event() {
-        const SKIPPED_EVENT: InternalEvent = InternalEvent::Event(Event::Resize(10, 10));
-        const CURSOR_EVENT: InternalEvent = InternalEvent::CursorPosition(10, 20);
+        const SKIPPED_EVENT: InternalEventRepr = InternalEventRepr::Event(Event::Resize(10, 10));
+        const CURSOR_EVENT: InternalEventRepr = InternalEventRepr::CursorPosition(10, 20);
 
         let mut reader = InternalEventReader {
             events: vec![SKIPPED_EVENT, CURSOR_EVENT].into(),
@@ -246,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_poll_returns_true_if_source_has_at_least_one_event() {
-        let source = FakeSource::with_events(&[InternalEvent::Event(Event::Resize(10, 10))]);
+        let source = FakeSource::with_events(&[InternalEventRepr::Event(Event::Resize(10, 10))]);
 
         let mut reader = InternalEventReader {
             events: VecDeque::new(),
@@ -262,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_reads_returns_event_if_source_has_at_least_one_event() {
-        const EVENT: InternalEvent = InternalEvent::Event(Event::Resize(10, 10));
+        const EVENT: InternalEventRepr = InternalEventRepr::Event(Event::Resize(10, 10));
 
         let source = FakeSource::with_events(&[EVENT]);
 
@@ -277,7 +293,7 @@ mod tests {
 
     #[test]
     fn test_read_returns_events_if_source_has_events() {
-        const EVENT: InternalEvent = InternalEvent::Event(Event::Resize(10, 10));
+        const EVENT: InternalEventRepr = InternalEventRepr::Event(Event::Resize(10, 10));
 
         let source = FakeSource::with_events(&[EVENT, EVENT, EVENT]);
 
@@ -294,7 +310,7 @@ mod tests {
 
     #[test]
     fn test_poll_returns_false_after_all_source_events_are_consumed() {
-        const EVENT: InternalEvent = InternalEvent::Event(Event::Resize(10, 10));
+        const EVENT: InternalEventRepr = InternalEventRepr::Event(Event::Resize(10, 10));
 
         let source = FakeSource::with_events(&[EVENT, EVENT, EVENT]);
 
@@ -352,7 +368,7 @@ mod tests {
 
     #[test]
     fn test_poll_continues_after_error() {
-        const EVENT: InternalEvent = InternalEvent::Event(Event::Resize(10, 10));
+        const EVENT: InternalEventRepr = InternalEventRepr::Event(Event::Resize(10, 10));
 
         let source = FakeSource::new(&[EVENT, EVENT], ErrorKind::from(io::ErrorKind::Other));
 
@@ -371,7 +387,7 @@ mod tests {
 
     #[test]
     fn test_read_continues_after_error() {
-        const EVENT: InternalEvent = InternalEvent::Event(Event::Resize(10, 10));
+        const EVENT: InternalEventRepr = InternalEventRepr::Event(Event::Resize(10, 10));
 
         let source = FakeSource::new(&[EVENT, EVENT], ErrorKind::from(io::ErrorKind::Other));
 
@@ -388,19 +404,19 @@ mod tests {
 
     #[derive(Default)]
     struct FakeSource {
-        events: VecDeque<InternalEvent>,
+        events: VecDeque<InternalEventRepr>,
         error: Option<ErrorKind>,
     }
 
     impl FakeSource {
-        fn new(events: &[InternalEvent], error: ErrorKind) -> FakeSource {
+        fn new(events: &[InternalEventRepr], error: ErrorKind) -> FakeSource {
             FakeSource {
                 events: events.to_vec().into(),
                 error: Some(error),
             }
         }
 
-        fn with_events(events: &[InternalEvent]) -> FakeSource {
+        fn with_events(events: &[InternalEventRepr]) -> FakeSource {
             FakeSource {
                 events: events.to_vec().into(),
                 error: None,
@@ -419,7 +435,7 @@ mod tests {
         fn try_read(
             &mut self,
             _timeout: Option<Duration>,
-        ) -> Result<Option<InternalEvent>, ErrorKind> {
+        ) -> Result<Option<InternalEventRepr>, ErrorKind> {
             // Return error if set in case there's just one remaining event
             if self.events.len() == 1 {
                 if let Some(error) = self.error.take() {
@@ -447,3 +463,4 @@ mod tests {
         }
     }
 }
+

@@ -26,6 +26,7 @@ all-features = true
 # Features
 #
 [features]
+byte-repr = []
 default = []
 event-stream = ["futures-core"]
 

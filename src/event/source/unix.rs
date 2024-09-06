@@ -7,7 +7,7 @@ use crate::Result;
 
 #[cfg(feature = "event-stream")]
 use super::super::sys::Waker;
-use super::super::{
+use super::{super::{
     source::EventSource,
     sys::unix::{
         file_descriptor::{tty_fd, FileDesc},
@@ -15,7 +15,7 @@ use super::super::{
     },
     timeout::PollTimeout,
     Event, InternalEvent,
-};
+}, InternalEventRepr};
 
 // Tokens to identify file descriptor
 const TTY_TOKEN: Token = Token(0);
@@ -72,7 +72,7 @@ impl UnixInternalEventSource {
 }
 
 impl EventSource for UnixInternalEventSource {
-    fn try_read(&mut self, timeout: Option<Duration>) -> Result<Option<InternalEvent>> {
+    fn try_read(&mut self, timeout: Option<Duration>) -> Result<Option<InternalEventRepr>> {
         if let Some(event) = self.parser.next() {
             return Ok(Some(event));
         }
@@ -138,9 +138,15 @@ impl EventSource for UnixInternalEventSource {
                                     // it's a really long time from the mio, async-std/tokio executor, ...
                                     // point of view.
                                     let new_size = crate::terminal::size()?;
-                                    return Ok(Some(InternalEvent::Event(Event::Resize(
-                                        new_size.0, new_size.1,
-                                    ))));
+                                    #[cfg(not(feature = "byte-repr"))]
+                                    return Ok(Some(InternalEvent::Event(Event::Resize(new_size.0, new_size.1))));
+                                    #[cfg(feature = "byte-repr")]
+                                    return Ok(Some((
+                                        InternalEvent::Event(
+                                            Event::Resize(new_size.0, new_size.1)
+                                        ),
+                                        format!("\x1b[8;{};{}t", new_size.0, new_size.1).to_owned().into_bytes()
+                                    )));
                                 }
                                 _ => unreachable!("Synchronize signal registration & handling"),
                             };
@@ -179,7 +185,7 @@ impl EventSource for UnixInternalEventSource {
 #[derive(Debug)]
 struct Parser {
     buffer: Vec<u8>,
-    internal_events: VecDeque<InternalEvent>,
+    internal_events: VecDeque<InternalEventRepr>,
 }
 
 impl Default for Parser {
@@ -215,7 +221,10 @@ impl Parser {
 
             match parse_event(&self.buffer, more) {
                 Ok(Some(ie)) => {
+                    #[cfg(not(feature = "byte-repr"))]
                     self.internal_events.push_back(ie);
+                    #[cfg(feature = "byte-repr")]
+                    self.internal_events.push_back((ie, self.buffer.clone()));
                     self.buffer.clear();
                 }
                 Ok(None) => {
@@ -233,7 +242,7 @@ impl Parser {
 }
 
 impl Iterator for Parser {
-    type Item = InternalEvent;
+    type Item = InternalEventRepr;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.internal_events.pop_front()

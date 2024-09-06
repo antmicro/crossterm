@@ -691,8 +691,6 @@ pub(crate) fn parse_utf8_char(buffer: &[u8]) -> Result<Option<char>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::event::{KeyEventState, KeyModifiers, MouseButton, MouseEvent};
-
     use super::*;
 
     #[test]

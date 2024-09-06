@@ -12,6 +12,11 @@ pub(crate) mod unix;
 #[cfg(windows)]
 pub(crate) mod windows;
 
+#[cfg(not(feature = "byte-repr"))]
+pub(crate) type InternalEventRepr = InternalEvent;
+#[cfg(feature = "byte-repr")]
+pub(crate) type InternalEventRepr = (InternalEvent, Vec<u8>);
+
 /// An interface for trying to read an `InternalEvent` within an optional `Duration`.
 pub(crate) trait EventSource: Sync + Send {
     /// Tries to read an `InternalEvent` within the given duration.
@@ -22,7 +27,7 @@ pub(crate) trait EventSource: Sync + Send {
     ///               for the given timeout
     ///
     /// Returns `Ok(None)` if there's no event available and timeout expires.
-    fn try_read(&mut self, timeout: Option<Duration>) -> crate::Result<Option<InternalEvent>>;
+    fn try_read(&mut self, timeout: Option<Duration>) -> crate::Result<Option<InternalEventRepr>>;
 
     /// Returns a `Waker` allowing to wake/force the `try_read` method to return `Ok(None)`.
     #[cfg(feature = "event-stream")]

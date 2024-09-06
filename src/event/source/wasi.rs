@@ -9,13 +9,11 @@ use std::os::wasi::io::{FromRawFd, RawFd};
 
 use crate::Result;
 
-use super::super::{
+use super::{super::{
     source::EventSource,
-    sys::wasi::{
-        parse::parse_event,
-    },
+    sys::wasi::parse::parse_event,
     Event, InternalEvent,
-};
+}, InternalEventRepr};
 
 const CLOCK_TOKEN: u64 = 1;
 const TTY_TOKEN: u64 = 2;
@@ -83,7 +81,7 @@ impl WasiInternalEventSource {
 }
 
 impl EventSource for WasiInternalEventSource {
-    fn try_read(&mut self, timeout: Option<Duration>) -> Result<Option<InternalEvent>> {
+    fn try_read(&mut self, timeout: Option<Duration>) -> Result<Option<InternalEventRepr>> {
         if let Some(event) = self.parser.next() {
             return Ok(Some(event));
         }
@@ -200,9 +198,15 @@ impl EventSource for WasiInternalEventSource {
 
                         if events & wasi_ext_lib::WASI_EVENT_WINCH != 0 {
                             let new_size = crate::terminal::size()?;
-                            return Ok(Some(InternalEvent::Event(Event::Resize(
-                                new_size.0, new_size.1,
-                            ))));
+                            #[cfg(not(feature = "byte-repr"))]
+                            return Ok(Some(InternalEvent::Event(Event::Resize(new_size.0, new_size.1))));
+                            #[cfg(feature = "byte-repr")]
+                            return Ok(Some((
+                                InternalEvent::Event(
+                                    Event::Resize(new_size.0, new_size.1)
+                                ),
+                                format!("\x1b[8;{};{}t", new_size.0, new_size.1).to_owned().into_bytes()
+                            )));
                         }
                     },
                     _ => unreachable!(),
@@ -221,7 +225,7 @@ impl EventSource for WasiInternalEventSource {
 #[derive(Debug)]
 struct Parser {
     buffer: Vec<u8>,
-    internal_events: VecDeque<InternalEvent>,
+    internal_events: VecDeque<InternalEventRepr>,
 }
 
 impl Default for Parser {
@@ -242,7 +246,10 @@ impl Parser {
 
             match parse_event(&self.buffer, more) {
                 Ok(Some(ie)) => {
+                    #[cfg(not(feature = "byte-repr"))]
                     self.internal_events.push_back(ie);
+                    #[cfg(feature = "byte-repr")]
+                    self.internal_events.push_back((ie, self.buffer.clone()));
                     self.buffer.clear();
                 }
                 Ok(None) => {
@@ -260,7 +267,7 @@ impl Parser {
 }
 
 impl Iterator for Parser {
-    type Item = InternalEvent;
+    type Item = InternalEventRepr;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.internal_events.pop_front()
